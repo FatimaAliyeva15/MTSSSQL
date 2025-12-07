@@ -67,6 +67,13 @@ TicketId int foreign key references Tickets(Id)
 )
 
 
+create table TicketLogs (
+Id int identity primary key,
+TicketId int not null,
+[Action] nvarchar(60) not null,
+ActionDate datetime2 not null default GETDATE()
+)
+
 INSERT INTO Users (UserName, [Password], Email, [Role])
 VALUES
 ('fatima2004', '12345', 'fatima@example.com', 'Customer'),
@@ -126,5 +133,132 @@ VALUES
 (12.50, 'Card', 1),
 (15.00, 'Cash', 2),
 (20.00, 'Online', 3)
+
+Select * From ShowTime
+
+create view GetMovieShowtimes 
+As
+Select m.Title As Movie, h.Name As Hall, t.Name As Theater, s.StartTime, s.EndTime
+From ShowTime s
+Join Movies m ON s.MovieId = m.Id
+Join Halls h ON s.HallId = h.Id
+Join Theaters t ON h.TheaterId = t.Id
+
+Select * From MovieShowtimes
+
+Create view GetDailyRevenue As
+Select 
+    CAST(PaymentDate As Date) As RevenueDay,
+    SUM(Amount) As TotalRevenue
+From Payments
+Group by CAST(PaymentDate As date)
+
+Select * From GetDailyRevenue
+
+
+create view GetTicketDetails As
+Select u.UserName, m.Title As Movie, sh.StartTime, h.[Name] As Hall, t.[Name] As Theater, st.[Row], st.Number, tk.Price, tk.[Status]
+From Tickets tk
+Join Users u ON tk.UserId = u.Id
+Join ShowTime sh ON tk.ShowTimeId = sh.Id
+Join Movies m ON sh.MovieId = m.Id
+Join Halls h ON sh.HallId = h.Id
+Join Theaters t ON h.TheaterId = t.Id
+Join Seats st ON tk.SeatId = st.Id
+
+
+
+
+
+create procedure usp_BuyTicket @ShowTimeId int, @UserId int, @SeatId int, @Price decimal(10,2)
+As
+BEGIN
+    set nocount on
+    IF EXISTS (
+        Select 1 From Tickets
+        Where ShowTimeId = @ShowTimeId and SeatId = @SeatId and [Status] = 'Sold'
+    )
+    BEGIN
+        Raiserror('Bu oturacaq artıq satılıb.', 16, 1)
+        Return
+    END
+    INSERT INTO Tickets (ShowTimeId, UserId, SeatId, Price, PurchaseDate, [Status])
+    VALUES (@ShowTimeId, @UserId, @SeatId, @Price, GETDATE(), 'Sold')
+    PRINT 'Bilet uğurla alındı.'
+END
+
+exec usp_BuyTicket 1, 1, 2, 10.2
+
+create procedure usp_AddMovie @Title nvarchar(60), @Description nvarchar(250), @DurationMinute int, @Genre nvarchar(60), @ReleaseDate datetime = NULL
+As
+BEGIN
+    Set nocount on
+	INSERT INTO Movies (Title, [Description], DurationMinute, Genre, ReleaseDate)
+    VALUES (@Title, @Description, @DurationMinute, @Genre, @ReleaseDate)
+    PRINT 'Film uğurla əlavə edildi.'
+END
+
+exec usp_AddMovie @Title = 'The Matrix',  @Description = 'A computer hacker learns about the true nature of reality.',  @DurationMinute = 136, @Genre = 'Sci-Fi', @ReleaseDate = '1999-03-31';
+
+
+create procedure usp_CancelTicket @TicketId int
+As
+BEGIN
+    set nocount on
+    IF EXISTS (SELECT 1 FROM Tickets WHERE Id = @TicketId)
+    BEGIN
+        UPDATE Tickets
+        SET [Status] = 'Cancelled'
+        Where Id = @TicketId;
+        PRINT 'Bilet ləğv edildi.'
+    END
+    ELSE
+    BEGIN
+        Raiserror('Belə bilet tapılmadı.', 16, 1)
+    END
+END
+
+exec usp_CancelTicket 2
+
+
+Alter table Payments
+add [Status] nvarchar(60) not null default 'Completed'
+
+create trigger trg_CancelTicket_UpdatePayment
+ON Tickets
+AFTER UPDATE
+As
+BEGIN
+    Set nocount on
+    IF EXISTS (
+        SELECT 1 FROM inserted i
+        JOIN deleted d ON i.Id = d.Id
+        WHERE i.[Status] = 'Cancelled' AND d.[Status] <> 'Cancelled'
+    )
+    BEGIN
+        UPDATE p
+        SET p.[Status] = 'Cancelled'
+        From Payments p
+        Join inserted i ON p.TicketId = i.Id
+    END
+END
+
+
+create trigger trg_Ticket_Log
+On Tickets
+AFTER INSERT, UPDATE
+AS
+BEGIN
+    Set nocount on
+    INSERT INTO TicketLogs (TicketId, Action)
+    SELECT 
+        Id, 
+        CASE 
+            WHEN [Status] = 'Sold' THEN 'Ticket Purchased'
+            WHEN [Status] = 'Cancelled' THEN 'Ticket Cancelled'
+            ELSE 'Other'
+        END
+    From inserted
+END
 
 
